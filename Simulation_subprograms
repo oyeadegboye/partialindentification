@@ -1,0 +1,191 @@
+#####################################################################
+# bounds: Generic function for finding bounds for single instrument
+
+bounds<-function(D,Y,V,i,K0,K1){
+  one=rep(1,n)
+  Vtmp<-V[,i]
+  dat=data.frame(cbind(Y*D,D,one,Vtmp))
+  a=aggregate(dat[,1],list(dat[,4]),FUN=sum)$x
+  b=aggregate(dat[,2],list(dat[,4]),FUN=sum)$x
+  c=aggregate(dat[,3],list(dat[,4]),FUN=sum)$x
+  SYD=sum(Y*D)
+  SD=sum(D)
+  rm = which(b<5)
+#  mc=min(c)
+  if(length(rm)>0){
+    a=a[-rm]
+    b=b[-rm]
+    c=c[-rm]}
+#  if (mc==0) print(c)
+
+  temp1 = a/c + K0*(1-b/c) 
+  lb=max(temp1)
+  temp2 = a/c + K1*(1-b/c)
+  ub=min(temp2)
+  
+  if (lb < ub){
+    return(list(lb=lb,ub=ub,error=0))
+  }
+  else{return(list(lb=lb,ub=ub,error=1))}
+}
+
+#########################
+# refine2 bound
+
+refine2 = function(df, union_lb, union_ub, L, a){
+
+#print(df)
+    error=0
+    if (nrow(df) <= a){
+      refine_lb=min(df[,1],na.rm=TRUE)
+      refine_ub=max(df[,2],na.rm=TRUE)
+      if (refine_lb >= refine_ub) error = 1
+    } else{
+     allcomb = combn((1:nrow(df)),(nrow(df) - a +1))
+     ncombn = ncol(allcomb)
+     refine_lb = union_lb
+     refine_ub = union_ub
+     for (i in 1:ncombn){
+        refine_lb_tem=min(df$lb[allcomb[,i]])
+        refine_ub_tem=max(df$ub[allcomb[,i]])
+　　　　   if (refine_lb_tem >= refine_ub_tem) error = 1
+ 　　     else {           
+           refine_lb = max(refine_lb,refine_lb_tem)
+           refine_ub = min(refine_ub,refine_ub_tem)
+        } #if
+#          print(c(round(refine_lb_tem,4), round(refine_ub_tem,4), round(refine_lb,4), round(refine_ub,4), t(allcomb[,i]) ))
+        } #i
+      }
+#print("aaa")
+ 
+#    print(refine_lb)
+#    print(refine_ub)
+#    print(keep)
+    return(list(refine_lb= refine_lb, refine_ub= refine_ub, error= error)) 
+} # end refine
+
+######################################
+# Find_bounds: using different methods
+
+Find_bounds= function(D,Y,V,pD,K0,K1,L,s,a){
+  
+  err1=err2=err3=err4=err5=fail=0
+  
+  # No assumption (worst case) bounds
+  
+  if (pD>0) {
+    lb1 = sum(Y*D)/sum(D)*pD + K0*(1-pD)
+    ub1 = sum(Y*D)/sum(D)*pD + K1*(1-pD)
+  }else {
+    lb1=K0
+    ub1=K1
+  }
+  
+  lb=ub=w=0
+  failcount=0      
+  for(i in 1:L){
+    tmp=bounds(D,Y,V,i,K0,K1)
+    if(tmp$error==1){
+      lb[i]=NA
+      ub[i]=NA
+      w[i]= NA
+      failcount = failcount + 1 
+    }    else{
+      lb[i]=tmp$lb
+      ub[i]=tmp$ub
+      w[i] = ub[i]-lb[i]
+    }
+  }  
+
+  if (failcount == L){
+    return(list(fail=1))
+    break
+  }
+
+
+  df=data.frame(lb=lb,ub=ub, w=w)
+  df=na.omit(df)
+
+  #union
+
+  union_lb=min(df$lb)
+  union_ub=max(df$ub)
+  if (union_lb >= union_ub){
+    err3 = 1
+  }
+  
+ 
+# refine2 bound 
+
+  out = refine2(df, union_lb, union_ub,L, a[1])  
+  refine2_lb=out$refine_lb
+  refine2_ub=out$refine_ub
+  err5 = out$error
+ 
+  return(list(lb1=lb1,ub1=ub1, refine2_lb=refine2_lb,refine2_ub=refine2_ub, lb0 = lb, ub0 = ub,
+              err4=err4, err5=err5, fail = fail))    
+}# Find_bounds
+
+#################
+# Find CI
+
+f1 = function(x,a,alpha){ pnorm(x + a) - pnorm(-x) -alpha}
+
+Find_CI=function(lb_B,ub_B,lb,ub,alpha,nroot){
+   
+  sd_lb = sd(lb_B, na.rm = T)
+  sd_ub = sd(ub_B, na.rm = T)
+  a = (ub-lb)/max(sd_lb,sd_ub)
+
+print(c("a",a,lb,ub,max(sd_lb,sd_ub)))
+
+  fit4=try(uniroot(f1,a=a,alpha=alpha,lower=0,upper=5),T)
+  if(inherits(fit4,"try-error")){print("error pass1"); D=1.96}
+  else {D=fit4$root}
+  l = lb - D*sd_lb #/nroot
+  u = ub + D*sd_ub #/nroot
+
+  return(list(l_CI = l, u_CI = u))
+} # Find
+
+######################################
+#       regression imputation
+######################################
+
+impute = function(D,Y,V){
+
+        dat1 = data.frame(Y[D==1])
+        for (i in 1:ncol(V)) {dat1 = cbind(dat1,V[D==1,i])}
+        names(dat1)=c("Y",1:ncol(V))
+        out = glm(Y  ~ ., family = "binomial", data= dat1)
+
+        dat0 = data.frame(Y[D==0])
+        for (i in 1:ncol(V)) dat0 = cbind(dat0,V[D==0,i])
+        names(dat0)=c("Y",1:ncol(V))
+        pY0 = predict(out, newdata = dat0, type = "response")
+        pD = mean(D)       
+
+        regadj = mean(dat1$Y)*pD + mean(pY0)*(1-pD) 
+#    print(regadj)
+        return(list(regadj=regadj))
+
+} # impute
+
+
+# define functions for calculating E(D) and cor(D,Z)
+
+         myFunction = function(b0,bz,V,m0){
+              tmp=b0 + V%*%bz
+              exptmp=exp(tmp)
+              m=exptmp/(1+exptmp)
+           return(sum(m - m0)^2)
+          }
+
+        myFunction2 = function(a0,az,ay,V,Y,m0){
+              tmp=a0 + V%*%az + ay*Y
+              exptmp=exp(tmp)
+              m=exptmp/(1+exptmp)
+           return(sum(m - m0)^2)
+          }
+
+
