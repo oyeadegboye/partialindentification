@@ -1,0 +1,334 @@
+setwd('C:/yourfolder)
+
+#install.packages(c("gtools"), dependencies = TRUE, repos = 'http://cran.rstudio.com/')
+#install.packages("gtools")
+#install.packages(c("mvtnorm","bindata","MASS"))
+
+library(gtools)
+library(mvtnorm)
+library(bindata)
+require(MASS)
+
+write.table("",file="R_simulation_19a.txt",quote=F,append=F,row.names=FALSE,col.names=FALSE)
+
+write.table("",file="R_simulation_19.txt",quote=F,append=F,row.names=FALSE,col.names=FALSE)
+
+source("R_simulation_19_subprograms.r")
+
+############################
+# MAIN PROGRAM
+############################
+
+# Start the clock!
+
+ptm <- proc.time()
+
+# Initialize parameters
+
+Lrange=c(5,9)       # Number of candidate instruments
+srange=c(3,5)        # Number of valid instruments (first s inst are valid)
+arange=matrix(c(3,4,5,6),2,2,byrow=T) 
+
+K0=0       # Minimum value of Y (outcome variable of interest).
+K1=1       # Maximum value of Y (outcome variable of interest).
+n=1000     # number of observations
+nroot=sqrt(n)
+nboot=10  # number of bootstrap for calculating CI 
+nsim=1000 # number of simulations
+alpha=0.95 # confidence level
+zalpha = qnorm((1+alpha)/2)
+# bz: Coefficient on V in logit P(Y=1)
+az0= 5  # coefficient of instrument in D
+mz = pv = 0.5
+pY0= 0.15
+cz=0
+
+
+	write.table(t(c("az&","1-pD0&","rDY&&", "Imputation&","Worst case&", "IV","\\\\")),quote=F,
+	file="R_simulation_19a.txt",append=T,row.names=FALSE,col.names=FALSE)
+	write.table(t(c("&","&","&&","bounds&", "bounds","\\\\")),quote=F,
+	file="R_simulation_19a.txt",append=T,row.names=FALSE,col.names=FALSE)
+
+#for (rDY  in c(0.1)){
+for (rDY  in c(0.1,0.3)){
+
+for (Tbl in c(1)){
+  L = Lrange[Tbl]
+  s = srange[Tbl] 
+  a = arange[Tbl,]
+  for (pD0 in c(0.9,0.7,0.5)){
+#  for (pD0 in c(0.9)){
+
+	write.table(t(c("$\\rho_v$&","az&","bz&&", "Imputation&","Worst case&", "IV","\\\\")),quote=F,
+	file="R_simulation_19.txt",append=T,row.names=FALSE,col.names=FALSE)
+	write.table(t(c("&","&","&&","bounds&", "bounds","\\\\")),quote=F,
+	file="R_simulation_19.txt",append=T,row.names=FALSE,col.names=FALSE)
+
+
+    for (rho_v in c(0,0.3)){ 
+      for (az1 in c(5,0.5)){
+        for(bz1 in c(1,4)){
+
+
+#    for (rho_v in c(0.3)){ 
+#      for (az1 in c(5)){
+#        for(bz1 in c(4)){
+
+
+          if (az1==5) azname="Strong" else azname ="Strong + Weak"
+          if (bz1==1) bzname="Weak" else bzname ="Strong"
+          if (rDY==0.1) rDYname="Weak" else rDYname ="Moderate"
+
+
+        COV1 = COV4 = COV5 = rep(0,nsim)
+        LEN1 = LEN4 = LEN5 = rep(0,nsim)
+        LB1 = LB4 = LB5 = rep(0,nsim)
+        UB1 = UB4 = UB5 = rep(0,nsim)
+      
+        count=0    # number of successful simulation runs
+        miss_ratio=0
+ 
+        bz=c(rep(0,s),rep(bz1,(L-s)))
+
+        # generate dummy sample of nt=10000 V for calibration to find a0 and b0
+
+          nt = 10000
+          V0=matrix(NA,nt,L)
+          m = matrix(rho_v,s,s)
+          diag(m) = 1   
+          V0[,1:s] = rmvbin(nt, margprob = rep(0.5,s), bincorr = m) 
+          m2 = matrix(rho_v,(L-s),(L-s))
+          diag(m2) = 1   
+          V0[,(s+1):L] = rmvbin(nt, margprob = rep(0.5,(L-s)), bincorr = m2)
+ 
+          tem = sample(L)
+          az = rep(NA,L)
+	  az[tem[1:s]]= az0
+          az[tem[(s+1):L]]= az1 
+          
+        # find b0 that gives E(D) = pY0
+
+          oa = optimize(myFunction, bz=bz, V= V0, m0=pY0, interval=c(-5*L,0))
+          b0=oa$minimum 
+
+        # generate Y
+
+          tmp2=b0 + V0%*%bz
+          exptmp=exp(tmp2)
+          p2=exptmp/(1+exptmp)
+          Y0=rbinom(nt,1,p2)
+
+
+          print(c(oa,pY0))
+
+        # find a0 that gives E(D) = pD0
+
+          oa = optimize(myFunction2, az=az, V= V0, Y =Y0,ay=-sum(rDY*az),  m0=pD0,  interval=c(-5*L,0))
+          a0=oa$minimum 
+
+          print(c(oa,pD0))
+
+
+        # Start simulations 
+        
+        for (sim in 1:nsim) {
+
+          print(c("ro",rho_v,"az",az1,"md",pD0,"bz",bz1,"sim",sim))
+
+
+
+        # generate V and D
+
+          V=matrix(NA,n,L)
+          V[,1:s] = rmvbin(n, margprob = rep(0.5,s), bincorr = m) 
+          V[,(s+1):L] = rmvbin(n, margprob = rep(0.5,(L-s)), bincorr = m2) 
+
+        # generate Y
+
+          tmp2=b0 + V%*%bz 
+          exptmp=exp(tmp2)
+          p2=exptmp/(1+exptmp)
+          Y=rbinom(n,1,p2)
+
+          true= mean(Y)  # true parameter value
+
+
+          tmp=a0 + V%*%az + (-sum(rDY*az))*Y 
+          exptmp=exp(tmp)
+          p1=exptmp/(1+exptmp)
+          D=rbinom(n,size=1,prob=p1)
+          pD=mean(D)
+
+         
+          true= mean(Y)  # true parameter value
+          pD = mean(D)
+          corDY = cor(D,Y)
+
+          print(c("mY",true,"mD",pD, "cor", corDY)) 
+
+         # Results
+
+
+        n=length(D)      # number of observations
+        coverage=ceiling((1-alpha)*nboot) # coverage desired
+      
+# 	Results
+
+        ans = Find_bounds(D,Y,V,mean(D),K0,K1,L,s,a)
+        if (ans$fail==1) next
+
+        lb1=round(ans$lb1,3)
+        ub1=round(ans$ub1,3)
+	w1 = ub1 - lb1
+
+#	Other bounds
+   
+	idxinst= 1:L
+	lb0=ub0=rep(0,length(idxinst))
+	w0=rep(0,length(idxinst))
+  	for (i in idxinst){
+	   lb0[i]=round(ans$lb0[i],3)
+           ub0[i]=round(ans$ub0[i],3)
+	   w0[i] = round(ub0[i] - lb0[i],3) 
+   	}
+          
+        refine2_lb=round(ans$refine2_lb,3)
+        refine2_ub=round(ans$refine2_ub,3)
+        w4 = round(refine2_ub - refine2_lb,3) 
+
+        regadj =impute(D,Y,V)$regadj
+
+
+    # Bootstrap CI
+
+
+	idxinst= 1:L
+        lb0_boot=ub0_boot=matrix(0,length(idxinst),nboot)
+        lb1_boot=ub1_boot=refine2_lb_boot=refine2_ub_boot= regadj_boot =rep(0,nboot)
+        for (b in c(1:nboot)){
+
+                ib = sample(n, n, replace = T)
+         	ans=Find_bounds(D[ib],Y[ib],V[ib,],mean(D[ib]),K0,K1,L,s,a)
+                if (ans$fail==1) next
+
+#print(ans)
+        	lb1_boot[b]=ans$lb1
+          	ub1_boot[b]=ans$ub1
+		
+  		for (i in idxinst){
+	   		lb0_boot[i,b]=round(ans$lb0[i],3)
+           		ub0_boot[i,b]=round(ans$ub0[i],3)
+   		}
+
+          	refine2_lb_boot[b]=ans$refine2_lb
+          	refine2_ub_boot[b]=ans$refine2_ub
+
+                regadj_boot[b] = impute(D[ib],Y[ib],V[ib,])$regadj
+        } # b
+
+ 	l0=u0=rep(0,length(idxinst))
+ 	for (i in idxinst){
+
+#       individual IV bounds
+
+	        ans0=Find_CI(lb0_boot[i,],ub0_boot[i,],lb0[i],ub0[i],coverage,nboot)
+        	l0[i]=round(ans0$l_CI,3)
+        	u0[i]=round(ans0$u_CI,3)
+   	} 
+        
+
+#       no assumptions bounds
+
+        ans1=Find_CI(lb1_boot,ub1_boot,lb1,ub1,coverage,nboot)
+        l1=round(ans1$l_CI,3)
+        u1=round(ans1$u_CI,3)
+
+
+#       refine2 
+
+        ans4=Find_CI(refine2_lb_boot,refine2_ub_boot,refine2_lb,refine2_ub,coverage,nboot)
+        l4=round(ans4$l_CI,3)
+        u4=round(ans4$u_CI,3)
+
+#       impute
+    
+        l5= round(regadj - 1.96*sd(regadj_boot),3)
+        u5= round(regadj + 1.96*sd(regadj_boot),3)
+
+ 	len0=rep(0,length(idxinst))
+  	for (i in idxinst){
+        	len0[i]=round(u0[i]-l0[i],3)
+   	}     
+        len1=round(u1 - l1,3)
+        len4=round(u4 - l4,3)
+        len5=round(u5 - l5,3)
+
+            LEN1[sim]=u1-l1
+            if (l1 <= true & u1 >= true) COV1[sim]=1
+            LB1[sim]=l1
+            UB1[sim]=u1
+           
+            LEN4[sim]=u4-l4
+            if (l4 <= true & u4 >= true) COV4[sim]=1
+            LB4[sim]=l4
+            UB4[sim]=u4
+
+            LEN5[sim]=u5-l5
+            if (l5 <= true & u5 >= true) COV5[sim]=1
+            LB5[sim]=l5
+            UB5[sim]=u5
+
+           count = count + 1 
+                  
+     } # sim
+
+         cov1=round(sum(COV1,na.rm=T)/count,digits=3)
+         cov4=round(sum(COV4,na.rm=T)/count,digits=3)
+         cov5=round(sum(COV5,na.rm=T)/count,digits=3)
+        
+         len1=round(sum(LEN1,na.rm=T)/count,digits=3)
+         len4=round(sum(LEN4,na.rm=T)/count,digits=3)
+         len5=round(sum(LEN5,na.rm=T)/count,digits=3)
+        
+         l1=round(sum(LB1,na.rm=T)/count,digits=3)
+         l4=round(sum(LB4,na.rm=T)/count,digits=3)
+         l5=round(sum(LB5,na.rm=T)/count,digits=3)
+        
+         u1=round(sum(UB1,na.rm=T)/count,digits=3)
+         u4=round(sum(UB4,na.rm=T)/count,digits=3)
+         u5=round(sum(UB5,na.rm=T)/count,digits=3)
+
+       
+       # Print results: alpha and length of intervals, error rates
+  
+         write.table("\\\\",quote=F,file="R_simulation_19.txt",append=TRUE,row.names=FALSE,col.names=FALSE) 
+         write.table(t(c(rho_v,"&",azname,"&",bzname,"&& Coverage &", cov5,"& ", cov1,"& ", cov4,"& ", "\\\\")),quote=F, file="R_simulation_19.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+         write.table(t(c("&&&& Lower CI &",l5,"& ", l1,"& ", l4,"\\\\")),quote=F, file="R_simulation_19.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+         write.table(t(c("&&&& Upper CI &",u5,"&", u1,"& ", u4,"\\\\")),quote=F, file="R_simulation_19.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+         write.table(t(c("&&&& Width  &",len5,"&", len1,"& ", len4,"\\\\")),quote=F, file="R_simulation_19.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+#         write.table(t(c("&&&& Error rate   && ",merror5,"\\\\")),quote=F,file="R_simulation_19.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+
+       if (pD0 !=0.5 & rho_v == 0 & bz1 == 1){ 
+         write.table("\\\\",quote=F,file="R_simulation_19a.txt",append=TRUE,row.names=FALSE,col.names=FALSE) 
+         write.table(t(c(azname,"&",(1-pD0),"&",rDYname,"&& Coverage &", cov5,"& ", cov1,"& ", cov4,"& ", "\\\\")),quote=F, file="R_simulation_19a.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+         write.table(t(c("&&&& Lower CI &",l5,"& ", l1,"& ", l4,"\\\\")),quote=F, file="R_simulation_19a.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+         write.table(t(c("&&&& Upper CI &",u5,"&", u1,"& ", u4,"\\\\")),quote=F, file="R_simulation_19a.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+         write.table(t(c("&&&& Width  &",len5,"&", len1,"& ", len4,"\\\\")),quote=F, file="R_simulation_19a.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+       }
+
+       } # bz1
+      } # az1
+    } # rho_v
+    write.table(t(c("\\hline")),quote=F,file="R_simulation_19.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+    write.table("\\\\",quote=F,file="R_simulation_19.txt",append=TRUE,row.names=FALSE,col.names=FALSE) 
+  } # pD0
+} # Tbl
+
+}# rDY
+
+    write.table(t(c("\\hline")),quote=F,file="R_simulation_19a.txt",append=TRUE,row.names=FALSE,col.names=FALSE)
+    write.table("\\\\",quote=F,file="R_simulation_19a.txt",append=TRUE,row.names=FALSE,col.names=FALSE) 
+
+
+
+
